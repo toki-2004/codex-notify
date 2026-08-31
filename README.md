@@ -17,8 +17,7 @@
 
 ## 安装步骤
 
-1. 注册 Server酱：打开 <https://sct.ftqq.com>，用 GitHub 登录，扫码绑定微信，
-   进入"SendKey"页面复制你的 SendKey。
+1. 按下方"获取 SendKey"注册 Server酱并拿到密钥。
 2. 把项目里的 `config.example.json` 复制为 `config.json`（此文件含密钥，已加入
    .gitignore，不会提交），将 `serverchan_sendkey` 填为你的 SendKey。
 3. 确认 `~/.codex/config.toml` 里已有以下配置（本项目已替你写入）：
@@ -29,6 +28,29 @@
    ```
 
    修改 config.toml 后，新开的 Codex 会话立即生效。
+
+## 获取 SendKey（Server酱注册方法）
+
+SendKey 是 Server酱给每个账号分配的推送密钥，形如 `SCT` 开头的一串字符。
+创建步骤如下：
+
+1. 打开 <https://sct.ftqq.com>，点击"登入"，使用 GitHub 账号授权登录
+   （首次使用会跳转 GitHub OAuth 授权）。
+2. 登录后按页面提示使用微信扫码，关注"Server酱"微信服务号完成绑定
+   （也可按页面提示绑定其他接收渠道，微信服务号消息是默认推荐）。
+3. 进入"SendKey"页面（登录后首页即可看到），点击"复制"得到 SendKey；
+   如果尚未生成，点击页面上的"生成"按钮创建。
+4. 把 SendKey 粘贴到本项目 `config.json` 的 `serverchan_sendkey` 字段并保存。
+5. 可选验证：在 Server酱官网的"发送消息"测试页直接发一条消息，
+   确认微信能收到后，再回到本项目跑一次任务。
+
+注意事项：
+
+- SendKey 等同账号凭证，不要提交到公开仓库（本项目 config.json 已在
+  .gitignore 中，提交的是不含密钥的 `config.example.json`）。
+- Server酱免费额度有频率限制（具体以官网说明为准），去重窗口已默认 90 秒，
+  正常情况下不会触发限流。
+- 如果收不到消息，先看本项目 `logs\notify.log` 的发送结果，再对照官网文档排查。
 
 ## 配置项说明
 
