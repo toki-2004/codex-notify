@@ -66,6 +66,9 @@ python notify.py
 - `state\*.json`：每个会话最近一轮的状态与发送标记。
 - 本机 DNS 冷解析很慢，脚本内置了 127.0.0.100:53 快速解析 + 看门狗超时；
   推送失败会先写日志再重试一次，不会影响 Codex 本身。
+- TLS：本机 Python 默认证书库含已过期的旧根证书，曾导致 Server酱 HTTPS 误报
+  `certificate has expired`（curl 正常）；notify.py 已改用 certifi CA 包校验
+  （miniconda 自带），无需额外安装。
 
 ## 隐私提示
 

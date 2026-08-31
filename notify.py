@@ -21,6 +21,7 @@ import json
 import os
 import random
 import socket
+import ssl
 import struct
 import subprocess
 import sys
@@ -286,6 +287,19 @@ def on_turn(cfg):
 
 # ---------------- HTTP（带快速 DNS 与看门狗） ----------------
 
+def _ssl_context():
+    """certifi CA 包优先；Windows 系统证书库含已过期的旧根证书，
+    OpenSSL 会误报 certificate has expired（curl/schannel 正常）。"""
+    try:
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        try:
+            return ssl.create_default_context()
+        except Exception:
+            return None
+
+
 def _http_request(url, timeout, data=None, headers=None):
     """在子线程里发请求并限时等待；返回 (body, error)。"""
     result = {}
@@ -294,7 +308,12 @@ def _http_request(url, timeout, data=None, headers=None):
         try:
             with fast_dns():
                 req = urllib.request.Request(url, data=data, headers=headers or {})
-                with urllib.request.urlopen(req, timeout=timeout) as resp:
+                kwargs = {"timeout": timeout}
+                if url.lower().startswith("https://"):
+                    ctx = _ssl_context()
+                    if ctx is not None:
+                        kwargs["context"] = ctx
+                with urllib.request.urlopen(req, **kwargs) as resp:
                     result["status"] = resp.status
                     result["body"] = resp.read(8192).decode("utf-8", "replace")
         except Exception as e:
