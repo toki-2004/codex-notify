@@ -1,0 +1,10 @@
+{
+  "service": "serverchan",
+  "serverchan_sendkey": "",
+  "serverchan_api": "https://sctapi.ftqq.com/{key}.send",
+  "pushplus_token": "",
+  "pushplus_api": "http://www.pushplus.plus/send",
+  "debounce_seconds": 90,
+  "max_message_chars": 600,
+  "http_timeout_seconds": 8
+}
