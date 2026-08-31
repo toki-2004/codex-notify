@@ -51,6 +51,10 @@
 notify = ["你的python解释器路径", "本项目绝对路径/notify.py"]
 ```
 
+也可以直接下载 Releases 页面里的 `codex-notify-setup.zip`（含配置程序与配套脚本），
+解压到任意目录后双击 `codex-notify-setup.exe`，效果与 setup.bat 相同
+（系统仍需装有 Python 3，配置程序会自动探测）。
+
 ## 获取 SendKey（Server酱注册方法）
 
 SendKey 是 Server酱给每个账号分配的推送密钥，形如 `SCT` 开头的一串字符。

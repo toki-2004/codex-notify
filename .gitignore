@@ -3,3 +3,5 @@ state/
 logs/
 __pycache__/
 HANDOVER.md
+build/
+dist/
