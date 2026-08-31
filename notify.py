@@ -20,6 +20,7 @@ CODEX_THREAD_ID / CODEX_SESSION_ID / CODEX_CI，不含结论内容），脚本�
 """
 
 import json
+import hashlib
 import os
 import random
 import socket
@@ -45,6 +46,7 @@ DEFAULT_CONFIG = {
     "pushplus_token": "",             # PushPlus token（www.pushplus.plus）
     "pushplus_api": "http://www.pushplus.plus/send",
     "debounce_seconds": 0,            # 0 = 每轮立即发送；>0 = 静默满该秒数才发结论
+    "dedupe_seconds": 90,             # 相同结论内容在该秒数内只推一次（跨线程）
     "max_message_chars": 600,         # 结论截断长度（字符）
     "http_timeout_seconds": 8,        # 单次 HTTP 请求超时
 }
@@ -203,6 +205,40 @@ def read_state(thread_id):
     except Exception as e:
         log("WARN read_state failed: %r" % (e,))
         return None
+
+
+SENT_HASHES_PATH = os.path.join(STATE_DIR, "sent_hashes.json")
+
+
+def _load_sent_hashes():
+    try:
+        with open(SENT_HASHES_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _save_sent_hashes(data):
+    try:
+        os.makedirs(STATE_DIR, exist_ok=True)
+        with open(SENT_HASHES_PATH, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False)
+    except Exception:
+        pass
+
+
+def prune_sent_hashes(now, window):
+    """清掉超出去重窗口的记录，返回剩余哈希表。"""
+    cutoff = now - max(0, int(window))
+    sent = {k: v for k, v in _load_sent_hashes().items()
+            if isinstance(v, (int, float)) and v >= cutoff}
+    _save_sent_hashes(sent)
+    return sent
+
+
+def content_hash(title, content):
+    return hashlib.sha256((title + "\n" + content).encode("utf-8")).hexdigest()
 
 
 # ---------------- 读取 Codex 本地会话文件（rollout JSONL） ----------------
@@ -376,6 +412,11 @@ def on_turn(cfg):
     thread_id = info.get("thread_id") or info.get("session_id")
     if not thread_id:
         log("WARN on_turn skipped: no thread_id in env/argv")
+        return
+    # 平台自动审查/守护代理等临时线程没有 rollout 会话文件，
+    # 其结论用户不可见，不应推送；真实对话线程的 rollout 在会话开始时就已创建。
+    if not find_rollout_file(thread_id):
+        log("WARN skip: no rollout file for thread=%s (ephemeral agent)" % thread_id)
         return
     payload = read_turn_payload(thread_id) or {}
     turn_id = payload.get("turn_id") or info.get("turn_id") or (
@@ -554,8 +595,18 @@ def run_finalize(cfg, thread_id, turn_id, debounce):
         if payload.get("duration_ms"):
             st["duration_ms"] = payload["duration_ms"]
         save_state(thread_id, st)
+    # 先构建消息做去重判断，再真正发送
+    _title, _content = build_message(cfg, st)
+    window = int(cfg.get("dedupe_seconds", 90) or 90)
+    sent = prune_sent_hashes(time.time(), window)
+    h = content_hash(_title, _content)
+    if h in sent:
+        log("SEND SKIP duplicate thread=%s turn=%s" % (thread_id, turn_id))
+        return
     (ok, detail), _title, _content = send_notification(cfg, st)
     if ok:
+        sent[h] = time.time()
+        _save_sent_hashes(sent)
         st["sent"] = True
         st["sent_at"] = time.time()
         save_state(thread_id, st)
@@ -568,6 +619,9 @@ def run_finalize(cfg, thread_id, turn_id, debounce):
     time.sleep(5)
     (ok2, detail2), _, _ = send_notification(cfg, st)
     if ok2:
+        sent2 = prune_sent_hashes(time.time(), window)
+        sent2[h] = time.time()
+        _save_sent_hashes(sent2)
         st["sent"] = True
         st["sent_at"] = time.time()
         save_state(thread_id, st)

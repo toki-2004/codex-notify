@@ -14,6 +14,10 @@
   结论与耗时，从 `session_meta` 拿到工作目录与客户端。
   注意：钩子进程环境里 `CODEX_THREAD_ID` 等变量存在但为空字符串，argv JSON 字段
   必须显式覆盖空值（不能用 `setdefault`），否则 thread_id 取不到、推送被跳过。
+- 平台自动审查/守护代理等临时线程没有 rollout 会话文件，其结论用户不可见：
+  notify.py 只推送有 rollout 文件的真实对话线程，临时线程直接跳过。
+- `dedupe_seconds`（默认 90）：相同结论内容在窗口内只推一次（跨线程同样生效），
+  发送记录存于 `state/sent_hashes.json`（gitignore）。
 - `notify.py` 把本轮信息写入 `state/<thread_id>.json`，并启动一个脱离 Codex 的
   延迟进程 `notify.py finalize ...`。
 - finalizer 等待 `debounce_seconds`（默认 0，即立刻发送）后检查状态。如果该值大于 0：
