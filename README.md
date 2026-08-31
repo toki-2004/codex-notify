@@ -9,9 +9,11 @@
   由 `~/.codex/config.toml` 里的 `notify` 配置调用本项目的 `notify.py`。
 - `notify.py` 把本轮信息（会话 ID、轮次 ID、工作目录、最后结论）写入
   `state/<thread_id>.json`，并启动一个脱离 Codex 的延迟进程 `notify.py finalize ...`。
-- finalizer 等待去重窗口（默认 90 秒）后检查状态：如果期间又出现了新的一轮
-  （turn_id 已变化），说明任务还在继续，旧 finalizer 自动放弃；只有"最后一轮
-  完成后静默满 90 秒"才真正发送通知。这就是"同一任务只给结论"。
+- finalizer 等待 `debounce_seconds`（默认 0，即立刻发送）后检查状态。如果该值大于 0：
+  期间又出现新的一轮（turn_id 已变化）说明任务还在继续，旧 finalizer 自动放弃；
+  只有"最后一轮完成后静默满该秒数"才真正发送通知，实现"同一任务只给结论"。
+- 注意：设为 0（立刻发送）时，同一任务里每追问一轮就会立刻再收到一条新通知
+  （系统无法预知你之后还会不会继续问）；想要合并连续多轮，把该值调大即可。
 - 推送渠道默认 **Server酱**（sct.ftqq.com，微信服务号消息），也支持 PushPlus，
   在 `config.json` 里切换。
 
@@ -48,8 +50,8 @@ SendKey 是 Server酱给每个账号分配的推送密钥，形如 `SCT` 开头�
 
 - SendKey 等同账号凭证，不要提交到公开仓库（本项目 config.json 已在
   .gitignore 中，提交的是不含密钥的 `config.example.json`）。
-- Server酱免费额度有频率限制（具体以官网说明为准），去重窗口已默认 90 秒，
-  正常情况下不会触发限流。
+- Server酱免费额度有频率限制（具体以官网说明为准）；`debounce_seconds` 默认 0
+  （每轮立刻发送），如需合并连续多轮可调大该值，正常使用不会触发限流。
 - 如果收不到消息，先看本项目 `logs\notify.log` 的发送结果，再对照官网文档排查。
 
 ## 配置项说明
@@ -59,7 +61,7 @@ SendKey 是 Server酱给每个账号分配的推送密钥，形如 `SCT` 开头�
 | `service` | 推送渠道：`serverchan` 或 `pushplus` | `serverchan` |
 | `serverchan_sendkey` | Server酱 SendKey | 空（不发，仅记日志） |
 | `pushplus_token` | PushPlus token | 空 |
-| `debounce_seconds` | 同一任务去重静默窗口（秒） | 90 |
+| `debounce_seconds` | 去重静默窗口（秒）；0 = 每轮立刻发送 | 0 |
 | `max_message_chars` | 结论截断长度（字符） | 600 |
 | `http_timeout_seconds` | 单次 HTTP 超时（秒） | 8 |
 
@@ -91,6 +93,14 @@ python notify.py
 - TLS：本机 Python 默认证书库含已过期的旧根证书，曾导致 Server酱 HTTPS 误报
   `certificate has expired`（curl 正常）；notify.py 已改用 certifi CA 包校验
   （miniconda 自带），无需额外安装。
+
+## 常见问题
+
+- **收不到消息**：先看 `logs\notify.log` 里的发送结果；确认 `config.json` 中
+  `serverchan_sendkey` 已填写且没有多余空格。
+- **想合并同一任务的连续多轮**：把 `config.json` 的 `debounce_seconds` 调大
+  （如 15–30 秒），期间的新一轮会合并，只在静默满该秒数后发一条。
+- **想每轮立刻收到**：`debounce_seconds` 保持 0 即可，任务每完成一轮约 1 秒内推送。
 
 ## 隐私提示
 

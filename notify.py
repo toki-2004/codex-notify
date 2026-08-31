@@ -279,7 +279,8 @@ def on_turn(cfg):
         "last_assistant_message": info.get("last_assistant_message", ""),
     }
     save_state(thread_id, data)
-    debounce = int(cfg.get("debounce_seconds", 90) or 90)
+    debounce_raw = cfg.get("debounce_seconds", 90)
+    debounce = int(debounce_raw) if debounce_raw is not None else 90
     log("TURN thread=%s turn=%s cwd=%s debounce=%ss"
         % (thread_id, turn_id, info.get("cwd", ""), debounce))
     spawn_finalizer(thread_id, turn_id, debounce)
