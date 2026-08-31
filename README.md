@@ -28,19 +28,28 @@
 - 推送渠道默认 **Server酱**（sct.ftqq.com，微信服务号消息），也支持 PushPlus，
   在 `config.json` 里切换。
 
-## 安装步骤
+## 安装步骤（一键配置）
+
+前提：Windows 已安装 Python 3（<https://www.python.org/downloads/>，安装时勾选
+"Add python.exe to PATH"，或使用系统自带的 py 启动器）。
 
 1. 按下方"获取 SendKey"注册 Server酱并拿到密钥。
-2. 把项目里的 `config.example.json` 复制为 `config.json`（此文件含密钥，已加入
-   .gitignore，不会提交），将 `serverchan_sendkey` 填为你的 SendKey。
-3. 确认 `~/.codex/config.toml` 里已有以下配置（本项目已替你写入）：
+2. 双击项目根目录的 `setup.bat`（或运行 `python setup_notify.py`）。
+3. 按提示粘贴 SendKey 并回车，工具会自动完成：
+   - 写入本项目 `config.json`：`serverchan_sendkey` 填为新值；若已有 SendKey，
+     直接替换成新输入的值，其余配置项保持不变；
+   - 向 `~/.codex/config.toml` 注入 `notify` 钩子：只新增或替换 `notify` 这一行，
+     不修改文件中任何其他条目；文件不存在会自动创建；
+   - 询问是否发送一条测试消息验证（推荐 y）。
+4. 若 Codex 正在运行，重启会话；新开的会话立即生效。
 
-   ```toml
-   notify = ["C:/Users/TOKI/miniconda3/python.exe",
-             "D:/pythonitems/codex-notify/notify.py"]
-   ```
+不想用一键工具时，可手动配置：把 `config.example.json` 复制为 `config.json`
+（含密钥，已在 .gitignore 中，不会提交），填入 `serverchan_sendkey`；再在
+`~/.codex/config.toml` 根级添加一行：
 
-   修改 config.toml 后，新开的 Codex 会话立即生效。
+```toml
+notify = ["你的python解释器路径", "本项目绝对路径/notify.py"]
+```
 
 ## 获取 SendKey（Server酱注册方法）
 
@@ -73,6 +82,7 @@ SendKey 是 Server酱给每个账号分配的推送密钥，形如 `SCT` 开头�
 | `serverchan_sendkey` | Server酱 SendKey | 空（不发，仅记日志） |
 | `pushplus_token` | PushPlus token | 空 |
 | `debounce_seconds` | 去重静默窗口（秒）；0 = 每轮立刻发送 | 0 |
+| `dedupe_seconds` | 相同结论内容去重窗口（秒），跨线程生效 | 90 |
 | `max_message_chars` | 结论截断长度（字符） | 600 |
 | `http_timeout_seconds` | 单次 HTTP 超时（秒） | 8 |
 
