@@ -368,7 +368,10 @@ def on_turn(cfg):
     argv_info = argv_turn_info()
     if argv_info:
         for k, v in argv_info.items():
-            info.setdefault(k, v)
+            # 钩子进程环境里 CODEX_THREAD_ID 等变量存在但为空字符串，
+            # setdefault 不会覆盖已存在的空值，必须用 argv 的事件字段补齐。
+            if v and not info.get(k):
+                info[k] = v
         log("INFO turn info from argv json (env thread empty)")
     thread_id = info.get("thread_id") or info.get("session_id")
     if not thread_id:

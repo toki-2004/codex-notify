@@ -12,6 +12,8 @@
   （环境变量为空）。notify.py 两者都支持（环境变量优先，argv JSON 兜底），据此读取本地会话文件
   `~/.codex/sessions/**/rollout-*.jsonl`：从 `task_complete` 记录拿到轮次 ID、
   结论与耗时，从 `session_meta` 拿到工作目录与客户端。
+  注意：钩子进程环境里 `CODEX_THREAD_ID` 等变量存在但为空字符串，argv JSON 字段
+  必须显式覆盖空值（不能用 `setdefault`），否则 thread_id 取不到、推送被跳过。
 - `notify.py` 把本轮信息写入 `state/<thread_id>.json`，并启动一个脱离 Codex 的
   延迟进程 `notify.py finalize ...`。
 - finalizer 等待 `debounce_seconds`（默认 0，即立刻发送）后检查状态。如果该值大于 0：
