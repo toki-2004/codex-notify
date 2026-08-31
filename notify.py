@@ -5,12 +5,14 @@
     notify = ["C:/Users/TOKI/miniconda3/python.exe",
               "D:/pythonitems/codex-notify/notify.py"]
 
-每次 Codex 完成一轮（agent-turn-complete）都会调用本脚本，脚本只负责：
-1. 把本轮信息（thread_id / turn_id / cwd / 结论）写入 state/<thread_id>.json；
-2. 启动一个脱离当前进程的 finalizer，等待 debounce_seconds 秒；
+每次 Codex 完成一轮都会调用本脚本（0.151.0 的 notify 只传
+CODEX_THREAD_ID / CODEX_SESSION_ID / CODEX_CI，不含结论内容），脚本负责：
+1. 以 CODEX_THREAD_ID 定位本地会话文件 ~/.codex/sessions/**/rollout-*.jsonl，
+   读取本轮 task_complete 记录（turn_id、结论、耗时）与 session_meta（工作目录），
+   连同时间戳写入 state/<thread_id>.json；
+2. 启动一个脱离当前进程的 finalizer，等待 debounce_seconds 秒（0 = 立即）；
    期间若又有新的一轮完成（turn_id 变化），旧 finalizer 醒来发现已过期会放弃，
    只有"最后一个 turn 后静默满 debounce 秒"的那个 finalizer 才真正推送。
-   这就是"同一任务只发最终结论"的去重逻辑。
 
 推送渠道：Server酱（微信服务号消息）或 PushPlus，配置见 config.json。
 本机网络注意：系统 DNS 冷解析极慢，推送前先走 127.0.0.100:53 快速解析
@@ -42,7 +44,7 @@ DEFAULT_CONFIG = {
     "serverchan_api": "https://sctapi.ftqq.com/{key}.send",
     "pushplus_token": "",             # PushPlus token（www.pushplus.plus）
     "pushplus_api": "http://www.pushplus.plus/send",
-    "debounce_seconds": 90,           # 同一任务连续多轮，静默满该秒数才发结论
+    "debounce_seconds": 0,            # 0 = 每轮立即发送；>0 = 静默满该秒数才发结论
     "max_message_chars": 600,         # 结论截断长度（字符）
     "http_timeout_seconds": 8,        # 单次 HTTP 请求超时
 }
@@ -203,6 +205,68 @@ def read_state(thread_id):
         return None
 
 
+# ---------------- 读取 Codex 本地会话文件（rollout JSONL） ----------------
+
+CODEX_HOME = os.environ.get("CODEX_HOME") or os.path.join(
+    os.path.expanduser("~"), ".codex")
+SESSIONS_ROOT = os.path.join(CODEX_HOME, "sessions")
+
+
+def find_rollout_file(thread_id):
+    """按线程 ID 在 ~/.codex/sessions 下找 rollout JSONL（取最新 mtime）。"""
+    best = None
+    best_mtime = 0.0
+    suffix = "-" + str(thread_id) + ".jsonl"
+    try:
+        for dirpath, _dirnames, filenames in os.walk(SESSIONS_ROOT):
+            for name in filenames:
+                if not (name.startswith("rollout-") and name.endswith(suffix)):
+                    continue
+                path = os.path.join(dirpath, name)
+                try:
+                    mtime = os.path.getmtime(path)
+                except OSError:
+                    continue
+                if mtime > best_mtime:
+                    best, best_mtime = path, mtime
+    except OSError:
+        return None
+    return best
+
+
+def read_turn_payload(thread_id):
+    """读 rollout 文件，返回最近一轮完成信息；找不到返回 None。"""
+    path = find_rollout_file(thread_id)
+    if not path:
+        return None
+    payload = {}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except Exception:
+                    continue
+                rtype = rec.get("type")
+                body = rec.get("payload") or {}
+                if rtype == "session_meta":
+                    payload.setdefault("cwd", body.get("cwd", ""))
+                    payload.setdefault("source", body.get("source", ""))
+                    payload.setdefault("originator", body.get("originator", ""))
+                elif rtype == "event_msg" and body.get("type") == "task_complete":
+                    payload["turn_id"] = body.get("turn_id", "")
+                    payload["last_assistant_message"] = body.get(
+                        "last_agent_message", "")
+                    payload["duration_ms"] = body.get("duration_ms")
+    except Exception as e:
+        log("WARN read_turn_payload failed: %r" % (e,))
+        return None
+    return payload or None
+
+
 # ---------------- notify hook 环境变量读取 ----------------
 
 _ENV_MAPPING = {
@@ -217,7 +281,11 @@ _ENV_MAPPING = {
 
 
 def env_turn_info():
-    """从环境变量里找出本轮信息（兼容不同前缀写法，按后缀匹配）。"""
+    """从环境变量里找出本轮信息。
+
+    兼容两套命名：旧版 CODEX_HOOK_AGENT_TURN_COMPLETE_* 后缀匹配，
+    以及 0.151.0 实际传入的 CODEX_THREAD_ID / CODEX_SESSION_ID / CODEX_CI。
+    """
     info = {}
     for key, value in os.environ.items():
         up = key.upper()
@@ -228,6 +296,12 @@ def env_turn_info():
         field = _ENV_MAPPING.get(norm)
         if field:
             info[field] = value
+    if not info.get("thread_id"):
+        info["thread_id"] = os.environ.get("CODEX_THREAD_ID", "")
+    if not info.get("session_id"):
+        info["session_id"] = os.environ.get("CODEX_SESSION_ID", "")
+    if os.environ.get("CODEX_CI") and not info.get("client"):
+        info["client"] = "exec"
     return info
 
 
@@ -265,24 +339,29 @@ def spawn_finalizer(thread_id, turn_id, debounce):
 
 def on_turn(cfg):
     info = env_turn_info()
-    thread_id = info.get("thread_id")
-    turn_id = info.get("turn_id")
-    if not thread_id or not turn_id:
-        log("WARN on_turn skipped: no thread_id/turn_id in env")
+    thread_id = info.get("thread_id") or info.get("session_id")
+    if not thread_id:
+        log("WARN on_turn skipped: no thread_id in env")
         return
+    payload = read_turn_payload(thread_id) or {}
+    turn_id = payload.get("turn_id") or ("turn-%d" % int(time.time()))
+    cwd = payload.get("cwd") or info.get("cwd") or os.getcwd()
+    client = (payload.get("originator") or payload.get("source")
+              or info.get("client") or "cli")
     data = {
         "thread_id": thread_id,
         "turn_id": turn_id,
         "ts": time.time(),
-        "cwd": info.get("cwd", ""),
-        "client": info.get("client", ""),
-        "last_assistant_message": info.get("last_assistant_message", ""),
+        "cwd": cwd,
+        "client": client,
+        "last_assistant_message": payload.get("last_assistant_message", ""),
+        "duration_ms": payload.get("duration_ms"),
     }
     save_state(thread_id, data)
-    debounce_raw = cfg.get("debounce_seconds", 90)
-    debounce = int(debounce_raw) if debounce_raw is not None else 90
-    log("TURN thread=%s turn=%s cwd=%s debounce=%ss"
-        % (thread_id, turn_id, info.get("cwd", ""), debounce))
+    debounce_raw = cfg.get("debounce_seconds", 0)
+    debounce = int(debounce_raw) if debounce_raw is not None else 0
+    log("TURN thread=%s turn=%s cwd=%s client=%s debounce=%ss"
+        % (thread_id, turn_id, cwd, client, debounce))
     spawn_finalizer(thread_id, turn_id, debounce)
 
 
@@ -386,6 +465,9 @@ def build_message(cfg, st):
         lines.append("工作目录：" + cwd)
     if client:
         lines.append("客户端：" + client)
+    duration_ms = st.get("duration_ms")
+    if duration_ms:
+        lines.append("耗时：%.1f 秒" % (float(duration_ms) / 1000.0))
     if text:
         lines.append("")
         lines.append("Codex 结论：")
@@ -412,6 +494,30 @@ def run_finalize(cfg, thread_id, turn_id, debounce):
     if not st or st.get("turn_id") != turn_id:
         log("FINALIZE abort: superseded thread=%s turn=%s" % (thread_id, turn_id))
         return
+    # 从 rollout 补全/校验最新一轮（文件可能刚写入，最多等 3 秒）
+    deadline = time.time() + 3.0
+    payload = None
+    while time.time() < deadline:
+        payload = read_turn_payload(thread_id)
+        if payload and payload.get("turn_id"):
+            break
+        time.sleep(0.3)
+    if payload and payload.get("turn_id"):
+        p_turn = payload["turn_id"]
+        if p_turn != turn_id and not str(turn_id).startswith("turn-"):
+            log("FINALIZE abort: newer turn in rollout thread=%s turn=%s"
+                % (thread_id, turn_id))
+            return
+        st["turn_id"] = p_turn
+        if payload.get("cwd"):
+            st["cwd"] = payload["cwd"]
+        if payload.get("originator") or payload.get("source"):
+            st["client"] = payload.get("originator") or payload.get("source")
+        if payload.get("last_assistant_message"):
+            st["last_assistant_message"] = payload["last_assistant_message"]
+        if payload.get("duration_ms"):
+            st["duration_ms"] = payload["duration_ms"]
+        save_state(thread_id, st)
     (ok, detail), _title, _content = send_notification(cfg, st)
     if ok:
         st["sent"] = True

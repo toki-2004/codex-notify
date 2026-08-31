@@ -5,10 +5,13 @@
 
 ## 工作原理
 
-- Codex CLI 的 `notify` 钩子会在**每完成一轮**（agent-turn-complete）时触发一次，
-  由 `~/.codex/config.toml` 里的 `notify` 配置调用本项目的 `notify.py`。
-- `notify.py` 把本轮信息（会话 ID、轮次 ID、工作目录、最后结论）写入
-  `state/<thread_id>.json`，并启动一个脱离 Codex 的延迟进程 `notify.py finalize ...`。
+- Codex CLI 的 `notify` 钩子会在**每完成一轮**时触发一次，由
+  `~/.codex/config.toml` 里的 `notify` 配置调用本项目的 `notify.py`。
+  该版本只传 `CODEX_THREAD_ID` / `CODEX_SESSION_ID`，脚本据此读取本地会话文件
+  `~/.codex/sessions/**/rollout-*.jsonl`：从 `task_complete` 记录拿到轮次 ID、
+  结论与耗时，从 `session_meta` 拿到工作目录与客户端。
+- `notify.py` 把本轮信息写入 `state/<thread_id>.json`，并启动一个脱离 Codex 的
+  延迟进程 `notify.py finalize ...`。
 - finalizer 等待 `debounce_seconds`（默认 0，即立刻发送）后检查状态。如果该值大于 0：
   期间又出现新的一轮（turn_id 已变化）说明任务还在继续，旧 finalizer 自动放弃；
   只有"最后一轮完成后静默满该秒数"才真正发送通知，实现"同一任务只给结论"。
@@ -71,16 +74,14 @@ SendKey 是 Server酱给每个账号分配的推送密钥，形如 `SCT` 开头�
 
 ```powershell
 cd D:\pythonitems\codex-notify
-$env:CODEX_HOOK_AGENT_TURN_COMPLETE_THREAD_ID = "test-thread-1"
-$env:CODEX_HOOK_AGENT_TURN_COMPLETE_TURN_ID = "turn-1"
-$env:CODEX_HOOK_AGENT_TURN_COMPLETE_CWD = "D:\pythonitems"
-$env:CODEX_HOOK_AGENT_TURN_COMPLETE_CLIENT = "cli"
+$env:CODEX_THREAD_ID = "test-thread-1"
 python notify.py
 ```
 
 然后查看 `logs\notify.log` 与 `state\` 下的状态文件。
 填入真实 SendKey 后，每次任务结束手机会收到一条微信消息；发送明细记录在
-`logs\notify.log`。
+`logs\notify.log`。手动测试没有对应会话文件时，会以当前目录为工作目录、
+结论为空，但推送/日志链路同样会被验证。
 
 ## 日志与排错
 
