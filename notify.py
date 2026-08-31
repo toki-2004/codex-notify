@@ -413,11 +413,6 @@ def on_turn(cfg):
     if not thread_id:
         log("WARN on_turn skipped: no thread_id in env/argv")
         return
-    # 平台自动审查/守护代理等临时线程没有 rollout 会话文件，
-    # 其结论用户不可见，不应推送；真实对话线程的 rollout 在会话开始时就已创建。
-    if not find_rollout_file(thread_id):
-        log("WARN skip: no rollout file for thread=%s (ephemeral agent)" % thread_id)
-        return
     payload = read_turn_payload(thread_id) or {}
     turn_id = payload.get("turn_id") or info.get("turn_id") or (
         "turn-%d" % int(time.time()))
