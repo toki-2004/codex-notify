@@ -305,6 +305,32 @@ def env_turn_info():
     return info
 
 
+def argv_turn_info():
+    """新版 Codex exec 会话实测（2026-08-31）：notify 钩子把
+    agent-turn-complete 事件 JSON 直接作为 argv[1] 传入，此时 env 的
+    CODEX_THREAD_ID 为空；解析该 JSON 做兜底。"""
+    if len(sys.argv) < 2:
+        return {}
+    raw = sys.argv[1]
+    if not raw.lstrip().startswith("{"):
+        return {}
+    try:
+        ev = json.loads(raw)
+    except Exception:
+        return {}
+    if ev.get("type") != "agent-turn-complete":
+        return {}
+    info = {}
+    for key in ("thread-id", "turn-id", "cwd", "client", "last-assistant-message"):
+        value = ev.get(key) or ev.get(key.replace("-", "_"))
+        if value:
+            info[key.replace("-", "_")] = value
+    msgs = ev.get("input-messages") or ev.get("input_messages")
+    if msgs:
+        info["input_messages"] = msgs
+    return info
+
+
 # ---------------- 去重与延迟发送 ----------------
 
 def spawn_finalizer(thread_id, turn_id, debounce):
@@ -339,12 +365,18 @@ def spawn_finalizer(thread_id, turn_id, debounce):
 
 def on_turn(cfg):
     info = env_turn_info()
+    argv_info = argv_turn_info()
+    if argv_info:
+        for k, v in argv_info.items():
+            info.setdefault(k, v)
+        log("INFO turn info from argv json (env thread empty)")
     thread_id = info.get("thread_id") or info.get("session_id")
     if not thread_id:
-        log("WARN on_turn skipped: no thread_id in env")
+        log("WARN on_turn skipped: no thread_id in env/argv")
         return
     payload = read_turn_payload(thread_id) or {}
-    turn_id = payload.get("turn_id") or ("turn-%d" % int(time.time()))
+    turn_id = payload.get("turn_id") or info.get("turn_id") or (
+        "turn-%d" % int(time.time()))
     cwd = payload.get("cwd") or info.get("cwd") or os.getcwd()
     client = (payload.get("originator") or payload.get("source")
               or info.get("client") or "cli")
@@ -354,7 +386,8 @@ def on_turn(cfg):
         "ts": time.time(),
         "cwd": cwd,
         "client": client,
-        "last_assistant_message": payload.get("last_assistant_message", ""),
+        "last_assistant_message": payload.get("last_assistant_message", "")
+        or info.get("last_assistant_message", ""),
         "duration_ms": payload.get("duration_ms"),
     }
     save_state(thread_id, data)

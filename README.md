@@ -7,7 +7,9 @@
 
 - Codex CLI 的 `notify` 钩子会在**每完成一轮**时触发一次，由
   `~/.codex/config.toml` 里的 `notify` 配置调用本项目的 `notify.py`。
-  该版本只传 `CODEX_THREAD_ID` / `CODEX_SESSION_ID`，脚本据此读取本地会话文件
+  钩子传参有两种：TUI 会话通过环境变量 `CODEX_THREAD_ID` / `CODEX_SESSION_ID`；
+  exec 会话（Codex App/子代理）把 `agent-turn-complete` 事件 JSON 作为命令行参数传入
+  （环境变量为空）。notify.py 两者都支持（环境变量优先，argv JSON 兜底），据此读取本地会话文件
   `~/.codex/sessions/**/rollout-*.jsonl`：从 `task_complete` 记录拿到轮次 ID、
   结论与耗时，从 `session_meta` 拿到工作目录与客户端。
 - `notify.py` 把本轮信息写入 `state/<thread_id>.json`，并启动一个脱离 Codex 的
