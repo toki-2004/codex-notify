@@ -5,8 +5,8 @@
     双击 setup.bat，或手动运行：python setup_notify.py
 
 流程：
-    1. 提示输入 Server酱 SendKey；
-    2. 写入本项目 config.json（已有 SendKey 直接替换，其余配置保持不变）；
+    1. 选择推送渠道（默认 WxPusher，免费）并按提示输入密钥；
+    2. 写入本项目 config.json（已有密钥直接替换，其余配置保持不变）；
     3. 向 ~/.codex/config.toml 注入 notify 钩子（只新增/替换 notify 这一行，
        不修改文件中任何其他条目；文件不存在则新建）；
     4. 可选发送一条测试消息验证。
@@ -21,14 +21,18 @@ import os
 import re
 import subprocess
 import sys
+import time
 
 
 DEFAULT_CONFIG = {
-    "service": "serverchan",
+    "service": "wxpusher",
+    "wxpusher_apptoken": "",
+    "wxpusher_uids": "",
+    "wxpusher_api": "https://wxpusher.zjiecode.com/api/send/message",
     "serverchan_sendkey": "",
     "serverchan_api": "https://sctapi.ftqq.com/{key}.send",
     "pushplus_token": "",
-    "pushplus_api": "http://www.pushplus.plus/send",
+    "pushplus_api": "https://www.pushplus.plus/send",
     "debounce_seconds": 0,
     "dedupe_seconds": 90,
     "max_message_chars": 600,
@@ -182,12 +186,67 @@ def send_test_message(cfg):
     except Exception as e:
         print("[WARN] 无法加载 notify.py 发送测试消息: %r" % (e,))
         return
-    ok, detail = notify._push_serverchan(
-        cfg, "Codex-notify 配置成功", "这是一键配置工具发出的测试消息。")
+    st = {
+        "cwd": project_dir(),
+        "client": "setup",
+        "ts": time.time(),
+        "last_assistant_message": "这是一键配置工具发出的测试消息。",
+    }
+    (ok, detail), _title, _content = notify.send_notification(cfg, st)
     if ok:
-        print("[OK] 测试消息已发送，请查看手机微信")
+        print("[OK] 测试消息已发送，请查看手机（渠道：%s）" % cfg.get("service"))
     else:
         print("[WARN] 测试消息发送失败: %s（可稍后查看 logs/notify.log）" % detail)
+
+
+def ask_provider(cfg):
+    """选渠道并收集密钥，写回 cfg；返回 False 表示用户放弃（不做任何修改）。"""
+    cur = str(cfg.get("service") or "wxpusher")
+    names = {"wxpusher": "WxPusher(免费,推荐)", "serverchan": "Server酱(订阅制)",
+             "pushplus": "PushPlus(需实名)"}
+    print("推送渠道：1 = WxPusher（免费，推荐）  2 = Server酱  3 = PushPlus")
+    print("[INFO] 当前配置渠道：%s" % names.get(cur, cur))
+    choice = input("请选择（1/2/3，默认 1）: ").strip() or "1"
+    if choice not in ("1", "2", "3"):
+        print("[ERROR] 无效选择，已退出（未做任何修改）")
+        return False
+    service = {"1": "wxpusher", "2": "serverchan", "3": "pushplus"}[choice]
+
+    if service == "wxpusher":
+        old = (cfg.get("wxpusher_apptoken") or "").strip()
+        if old:
+            print("[INFO] 检测到已有 appToken: %s，输入新值将直接替换" % mask_key(old))
+        token = input("请输入 WxPusher appToken（AT 开头，见 https://wxpusher.zjiecode.com/admin/）: ").strip()
+        if not token:
+            print("[ERROR] appToken 不能为空，已退出（未做任何修改）")
+            return False
+        uid = input("请输入你的 UID（UID 开头，多个用逗号分隔；公众号 wxpusher「我的」里可查）: ").strip()
+        if not uid:
+            print("[ERROR] UID 不能为空，已退出（未做任何修改）")
+            return False
+        cfg["wxpusher_apptoken"] = token
+        cfg["wxpusher_uids"] = uid
+    elif service == "serverchan":
+        old = (cfg.get("serverchan_sendkey") or "").strip()
+        if old:
+            print("[INFO] 检测到已有 SendKey: %s，输入新值将直接替换" % mask_key(old))
+        key = input("请输入 Server酱 SendKey（形如 SCT...，见 https://sct.ftqq.com）: ").strip()
+        if not key:
+            print("[ERROR] SendKey 不能为空，已退出（未做任何修改）")
+            return False
+        cfg["serverchan_sendkey"] = key
+    else:
+        old = (cfg.get("pushplus_token") or "").strip()
+        if old:
+            print("[INFO] 检测到已有 token: %s，输入新值将直接替换" % mask_key(old))
+        key = input("请输入 PushPlus token（见 https://www.pushplus.plus）: ").strip()
+        if not key:
+            print("[ERROR] token 不能为空，已退出（未做任何修改）")
+            return False
+        cfg["pushplus_token"] = key
+
+    cfg["service"] = service
+    return True
 
 
 def main():
@@ -195,14 +254,8 @@ def main():
     print("codex-notify 一键配置")
     print("=" * 52)
     cfg = load_config_json()
-    old_key = (cfg.get("serverchan_sendkey") or "").strip()
-    if old_key:
-        print("[INFO] 检测到已有 SendKey: %s，输入新值后将直接替换" % mask_key(old_key))
-    key = input("请输入 Server酱 SendKey（形如 SCT...，可在 https://sct.ftqq.com 获取）: ").strip()
-    if not key:
-        print("[ERROR] SendKey 不能为空，已退出（未做任何修改）")
+    if not ask_provider(cfg):
         return 1
-    cfg["serverchan_sendkey"] = key
     save_config_json(cfg)
 
     python_path = resolve_notify_python()

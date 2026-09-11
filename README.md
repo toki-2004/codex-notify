@@ -1,6 +1,6 @@
 # Codex 手机通知（codex-notify）
 
-在 Codex CLI 完成任务时，把最终结论推送到手机微信（Server酱服务号消息）。
+在 Codex CLI 完成任务时，把最终结论推送到手机（默认 WxPusher，微信/客户端实时收）。
 同一任务连续多轮对话只会收到一条通知，去重窗口默认 90 秒。
 
 ## 工作原理
@@ -25,26 +25,29 @@
   只有"最后一轮完成后静默满该秒数"才真正发送通知，实现"同一任务只给结论"。
 - 注意：设为 0（立刻发送）时，同一任务里每追问一轮就会立刻再收到一条新通知
   （系统无法预知你之后还会不会继续问）；想要合并连续多轮，把该值调大即可。
-- 推送渠道默认 **Server酱**（sct.ftqq.com，微信服务号消息），也支持 PushPlus，
-  在 `config.json` 里切换。
+- 推送渠道默认 **WxPusher**（wxpusher.zjiecode.com，官方称永久免费，微信 + 各平台
+  客户端实时收），也支持 Server酱、PushPlus，在 `config.json` 的 `service` 里切换。
+  注：Server酱已改订阅制（免费额度受限），故不再作为默认渠道。
 
 ## 安装步骤（一键配置）
 
 前提：Windows 已安装 Python 3（<https://www.python.org/downloads/>，安装时勾选
 "Add python.exe to PATH"，或使用系统自带的 py 启动器）。
 
-1. 按下方"获取 SendKey"注册 Server酱并拿到密钥。
+1. 按下方"获取 appToken 与 UID"注册 WxPusher 并拿到两个值。
 2. 双击项目根目录的 `setup.bat`（或运行 `python setup_notify.py`）。
-3. 按提示粘贴 SendKey 并回车，工具会自动完成：
-   - 写入本项目 `config.json`：`serverchan_sendkey` 填为新值；若已有 SendKey，
-     直接替换成新输入的值，其余配置项保持不变；
+3. 按提示选渠道（默认 1 = WxPusher）并粘贴对应密钥，工具会自动完成：
+   - 写入本项目 `config.json`：填 `wxpusher_apptoken` + `wxpusher_uids`
+     （或 Server酱 `serverchan_sendkey` / PushPlus `pushplus_token`），
+     其余配置项保持不变；
    - 向 `~/.codex/config.toml` 注入 `notify` 钩子：只新增或替换 `notify` 这一行，
      不修改文件中任何其他条目；文件不存在会自动创建；
    - 询问是否发送一条测试消息验证（推荐 y）。
 4. 若 Codex 正在运行，重启会话；新开的会话立即生效。
 
 不想用一键工具时，可手动配置：把 `config.example.json` 复制为 `config.json`
-（含密钥，已在 .gitignore 中，不会提交），填入 `serverchan_sendkey`；再在
+（含密钥，已在 .gitignore 中，不会提交），填入 `wxpusher_apptoken` 与
+`wxpusher_uids`；再在
 `~/.codex/config.toml` 根级添加一行：
 
 ```toml
@@ -55,34 +58,36 @@ notify = ["你的python解释器路径", "本项目绝对路径/notify.py"]
 解压到任意目录后双击 `codex-notify-setup.exe`，效果与 setup.bat 相同
 （系统仍需装有 Python 3，配置程序会自动探测）。
 
-## 获取 SendKey（Server酱注册方法）
+## 获取 appToken 与 UID（WxPusher 注册方法，免费）
 
-SendKey 是 Server酱给每个账号分配的推送密钥，形如 `SCT` 开头的一串字符。
-创建步骤如下：
+WxPusher 需要两个值：应用令牌 `appToken`（发信用）和你的 `UID`（发给谁）。
 
-1. 打开 <https://sct.ftqq.com>，点击"登入"，使用 GitHub 账号授权登录
-   （首次使用会跳转 GitHub OAuth 授权）。
-2. 登录后按页面提示使用微信扫码，关注"Server酱"微信服务号完成绑定
-   （也可按页面提示绑定其他接收渠道，微信服务号消息是默认推荐）。
-3. 进入"SendKey"页面（登录后首页即可看到），点击"复制"得到 SendKey；
-   如果尚未生成，点击页面上的"生成"按钮创建。
-4. 把 SendKey 粘贴到本项目 `config.json` 的 `serverchan_sendkey` 字段并保存。
-5. 可选验证：在 Server酱官网的"发送消息"测试页直接发一条消息，
-   确认微信能收到后，再回到本项目跑一次任务。
+1. 打开 <https://wxpusher.zjiecode.com/admin/>，用微信扫码登录。
+2. 左侧「应用管理」→「创建应用」（名称随意，比如 codex-notify），创建后
+   在应用的 appToken 页复制 `AT` 开头的 appToken。
+3. 微信关注公众号 `wxpusher`（或下载 WxPusher 客户端），在「我的」→「我的UID」
+   里复制 `UID_` 开头的 UID；一个应用可绑多个 UID，多个用逗号分隔填进
+   `wxpusher_uids`。
+4. 把两个值填进本项目 `config.json`（`service` 保持 `wxpusher`），保存。
+5. 可选验证：`python notify.py` 手动跑一次，或直接看手机是否收到本轮结论。
 
 注意事项：
 
-- SendKey 等同账号凭证，不要提交到公开仓库（本项目 config.json 已在
+- appToken / UID 等同账号凭证，不要提交到公开仓库（本项目 config.json 已在
   .gitignore 中，提交的是不含密钥的 `config.example.json`）。
-- Server酱免费额度有频率限制（具体以官网说明为准）；`debounce_seconds` 默认 0
-  （每轮立刻发送），如需合并连续多轮可调大该值，正常使用不会触发限流。
+- 官方限制（以官网文档为准）：发送接口约 2 QPS，单个 UID 每天约 3000 条后
+  不再进通知栏；`debounce_seconds` 默认 0（每轮立刻发送），正常使用远不会触顶。
+- 备选渠道：Server酱（已改订阅制）与 PushPlus（需实名认证）仍可用，把
+  `config.json` 的 `service` 分别改成 `serverchan` / `pushplus` 并填对应密钥即可。
 - 如果收不到消息，先看本项目 `logs\notify.log` 的发送结果，再对照官网文档排查。
 
 ## 配置项说明
 
 | 配置键 | 说明 | 默认值 |
 | --- | --- | --- |
-| `service` | 推送渠道：`serverchan` 或 `pushplus` | `serverchan` |
+| `service` | 推送渠道：`wxpusher` / `serverchan` / `pushplus` | `wxpusher` |
+| `wxpusher_apptoken` | WxPusher 应用 appToken（AT 开头） | 空（不发，仅记日志） |
+| `wxpusher_uids` | WxPusher UID，多个用逗号分隔 | 空 |
 | `serverchan_sendkey` | Server酱 SendKey | 空（不发，仅记日志） |
 | `pushplus_token` | PushPlus token | 空 |
 | `debounce_seconds` | 去重静默窗口（秒）；0 = 每轮立刻发送 | 0 |
@@ -92,7 +97,7 @@ SendKey 是 Server酱给每个账号分配的推送密钥，形如 `SCT` 开头�
 
 ## 手动测试
 
-没有 SendKey 时，脚本只写日志、不发送（不会报错），可先这样验证链路：
+没有填密钥时，脚本只写日志、不发送（不会报错），可先这样验证链路：
 
 ```powershell
 cd D:\pythonitems\codex-notify
@@ -101,7 +106,7 @@ python notify.py
 ```
 
 然后查看 `logs\notify.log` 与 `state\` 下的状态文件。
-填入真实 SendKey 后，每次任务结束手机会收到一条微信消息；发送明细记录在
+填入真实 appToken/UID 后，每次任务结束手机会收到一条消息；发送明细记录在
 `logs\notify.log`。手动测试没有对应会话文件时，会以当前目录为工作目录、
 结论为空，但推送/日志链路同样会被验证。
 
@@ -114,14 +119,15 @@ python notify.py
 - 解析走系统 DNS（早期版本内置的 127.0.0.100:53 快速解析已删除：它一挂就
   让所有推送静默失败，而慢解析只发生在推送子线程里）；HTTP 请求带看门狗超时，
   推送失败会先写日志再重试一次，不会影响 Codex 本身。
-- TLS：本机 Python 默认证书库含已过期的旧根证书，曾导致 Server酱 HTTPS 误报
+- TLS：本机 Python 默认证书库含已过期的旧根证书，曾导致推送 HTTPS 误报
   `certificate has expired`（curl 正常）；notify.py 已改用 certifi CA 包校验
   （miniconda 自带），无需额外安装。
 
 ## 常见问题
 
 - **收不到消息**：先看 `logs\notify.log` 里的发送结果；确认 `config.json` 中
-  `serverchan_sendkey` 已填写且没有多余空格。
+  `wxpusher_apptoken` 与 `wxpusher_uids` 已填写且没有多余空格
+  （`service` 与所填渠道要一致）。
 - **想合并同一任务的连续多轮**：把 `config.json` 的 `debounce_seconds` 调大
   （如 15–30 秒），期间的新一轮会合并，只在静默满该秒数后发一条。
 - **想每轮立刻收到**：`debounce_seconds` 保持 0 即可，任务每完成一轮约 1 秒内推送。

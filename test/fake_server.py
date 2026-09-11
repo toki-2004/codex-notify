@@ -40,8 +40,17 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         length = int(self.headers.get("Content-Length", 0))
-        self._record(self.rfile.read(length))
-        self._reply({"code": 200, "msg": "success"})
+        body = self.rfile.read(length)
+        self._record(body)
+        # 按请求体猜渠道：WxPusher 成功码 1000，PushPlus 成功码 200
+        try:
+            is_wxpusher = "appToken" in json.loads(body.decode("utf-8", "replace"))
+        except Exception:
+            is_wxpusher = False
+        if is_wxpusher:
+            self._reply({"code": 1000, "msg": "处理成功"})
+        else:
+            self._reply({"code": 200, "msg": "success"})
 
     def log_message(self, *args):
         pass

@@ -14,7 +14,7 @@ CODEX_THREAD_ID / CODEX_SESSION_ID / CODEX_CI，不含结论内容），脚本�
    期间若又有新的一轮完成（turn_id 变化），旧 finalizer 醒来发现已过期会放弃，
    只有"最后一个 turn 后静默满 debounce 秒"的那个 finalizer 才真正推送。
 
-推送渠道：Server酱（微信服务号消息）或 PushPlus，配置见 config.json。
+推送渠道：WxPusher（默认，永久免费）、Server酱、PushPlus，配置见 config.json。
 网络：直接用系统 DNS（2026-09-11 起——原先的 127.0.0.100:53 隧道 DNS 已下线，
 它一挂推送就全失败，故整段删除走系统解析）；解析/请求都在 HTTP worker
 子线程里跑并带看门狗超时，绝不让推送拖住 Codex。
@@ -23,6 +23,7 @@ CODEX_THREAD_ID / CODEX_SESSION_ID / CODEX_CI，不含结论内容），脚本�
 import json
 import hashlib
 import os
+import re
 import ssl
 import subprocess
 import sys
@@ -38,11 +39,14 @@ LOG_DIR = os.path.join(PROJECT_DIR, "logs")
 LOG_PATH = os.path.join(LOG_DIR, "notify.log")
 
 DEFAULT_CONFIG = {
-    "service": "serverchan",          # serverchan | pushplus
+    "service": "wxpusher",            # wxpusher | serverchan | pushplus
+    "wxpusher_apptoken": "",          # WxPusher 应用 appToken（AT_ 开头）
+    "wxpusher_uids": "",              # WxPusher UID，多个用逗号分隔
+    "wxpusher_api": "https://wxpusher.zjiecode.com/api/send/message",
     "serverchan_sendkey": "",         # Server酱 SendKey（sct.ftqq.com）
     "serverchan_api": "https://sctapi.ftqq.com/{key}.send",
     "pushplus_token": "",             # PushPlus token（www.pushplus.plus）
-    "pushplus_api": "http://www.pushplus.plus/send",
+    "pushplus_api": "https://www.pushplus.plus/send",
     "debounce_seconds": 0,            # 0 = 每轮立即发送；>0 = 静默满该秒数才发结论
     "dedupe_seconds": 90,             # 相同结论内容在该秒数内只推一次（跨线程）
     "max_message_chars": 600,         # 结论截断长度（字符）
@@ -397,6 +401,48 @@ def _push_serverchan(cfg, title, content):
         return False, "bad response: %r body=%s" % (e, (body or "")[:200])
 
 
+def _wxpusher_uids(cfg):
+    """uids 支持列表或 "UID_a,UID_b" 字符串。"""
+    raw = cfg.get("wxpusher_uids") or ""
+    if isinstance(raw, (list, tuple)):
+        return [str(x).strip() for x in raw if str(x).strip()]
+    return [p.strip() for p in re.split(r"[,;\s]+", str(raw)) if p.strip()]
+
+
+def _push_wxpusher(cfg, title, content):
+    """WxPusher（永久免费）：POST JSON，code==1000 为成功。"""
+    token = (cfg.get("wxpusher_apptoken") or "").strip()
+    if not token:
+        return False, "not configured: wxpusher_apptoken"
+    uids = _wxpusher_uids(cfg)
+    if not uids:
+        return False, "not configured: wxpusher_uids"
+    api = cfg.get("wxpusher_api") or DEFAULT_CONFIG["wxpusher_api"]
+    payload = {
+        "appToken": token,
+        "content": content,
+        "summary": title[:100],
+        "contentType": 1,   # 1 = 纯文本
+        "uids": uids,
+        "verifyPayType": 0,  # 0 = 不校验付费订阅（免费额度与订阅无关）
+    }
+    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    resp, err = _http_request(
+        api,
+        int(cfg.get("http_timeout_seconds", 8)),
+        data=body,
+        headers={"Content-Type": "application/json"},
+    )
+    if err:
+        return False, "network error: %s" % err
+    try:
+        data = json.loads(resp)
+        code = data.get("code")
+        return code == 1000, "wxpusher code=%s msg=%s" % (code, data.get("msg"))
+    except Exception as e:
+        return False, "bad response: %r body=%s" % (e, (resp or "")[:200])
+
+
 def _push_pushplus(cfg, title, content):
     token = (cfg.get("pushplus_token") or "").strip()
     if not token:
@@ -447,10 +493,14 @@ def build_message(cfg, st):
 
 def send_notification(cfg, st):
     title, content = build_message(cfg, st)
-    service = cfg.get("service", "serverchan")
+    service = str(cfg.get("service") or "wxpusher").strip().lower()
+    if service == "wxpusher":
+        return _push_wxpusher(cfg, title, content), title, content
     if service == "pushplus":
         return _push_pushplus(cfg, title, content), title, content
-    return _push_serverchan(cfg, title, content), title, content
+    if service == "serverchan":
+        return _push_serverchan(cfg, title, content), title, content
+    return (False, "unknown service: %s" % service), title, content
 
 
 def run_finalize(cfg, thread_id, turn_id, debounce):
