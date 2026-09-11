@@ -15,17 +15,15 @@ CODEX_THREAD_ID / CODEX_SESSION_ID / CODEX_CI，不含结论内容），脚本�
    只有"最后一个 turn 后静默满 debounce 秒"的那个 finalizer 才真正推送。
 
 推送渠道：Server酱（微信服务号消息）或 PushPlus，配置见 config.json。
-本机网络注意：系统 DNS 冷解析极慢，推送前先走 127.0.0.100:53 快速解析
-（方案来自 desktop-pet/weather.py），并带看门狗超时，绝不让推送拖住 Codex。
+网络：直接用系统 DNS（2026-09-11 起——原先的 127.0.0.100:53 隧道 DNS 已下线，
+它一挂推送就全失败，故整段删除走系统解析）；解析/请求都在 HTTP worker
+子线程里跑并带看门狗超时，绝不让推送拖住 Codex。
 """
 
 import json
 import hashlib
 import os
-import random
-import socket
 import ssl
-import struct
 import subprocess
 import sys
 import threading
@@ -62,105 +60,6 @@ def log(msg):
             f.write(line)
     except Exception:
         pass
-
-
-# ---------------- 快速 DNS：直查本机隧道解析器，绕开系统慢解析 ----------------
-
-FAST_DNS_SERVER = ("127.0.0.100", 53)
-FAST_DNS_TIMEOUT_S = 2.0
-
-
-def _build_dns_query(host):
-    tid = random.randrange(0x10000)
-    header = struct.pack(">HHHHHH", tid, 0x0100, 1, 0, 0, 0)
-    qname = b"".join(bytes([len(p)]) + p.encode("ascii") for p in host.split("."))
-    return tid, header + qname + b"\x00" + struct.pack(">HH", 1, 1)
-
-
-def _skip_name(resp, pos):
-    """跳过 DNS 报文里的名字（含压缩指针）。"""
-    while pos < len(resp):
-        length = resp[pos]
-        if length & 0xC0 == 0xC0:  # 压缩指针：0b11 开头
-            return pos + 2
-        pos += length + 1
-        if length == 0:
-            return pos
-    return pos
-
-
-def _parse_a_records(resp):
-    if len(resp) < 12:
-        return []
-    _tid, flags, qd, an, _ns, _ar = struct.unpack(">HHHHHH", resp[:12])
-    if not (flags & 0x8000) or qd == 0:
-        return []
-    pos = 12
-    for _ in range(qd):  # 跳过问题段
-        pos = _skip_name(resp, pos) + 4
-    addrs = []
-    for _ in range(an):
-        pos = _skip_name(resp, pos)
-        if pos + 10 > len(resp):
-            break
-        typ, _cls, _ttl, rdlen = struct.unpack(">HHIH", resp[pos:pos + 10])
-        pos += 10
-        rdata = resp[pos:pos + rdlen]
-        pos += rdlen
-        if typ == 1 and len(rdata) == 4:  # A 记录
-            addrs.append(".".join(str(b) for b in rdata))
-    return addrs
-
-
-def fast_resolve(host):
-    """UDP 直查本机隧道 DNS，返回 A 记录列表；失败返回空列表。"""
-    sock = None
-    try:
-        if not isinstance(host, str) or not host:
-            return []
-        tid, query = _build_dns_query(host)
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.settimeout(FAST_DNS_TIMEOUT_S)
-        sock.sendto(query, FAST_DNS_SERVER)
-        resp, _ = sock.recvfrom(4096)
-        if len(resp) >= 2 and struct.unpack(">H", resp[:2])[0] == tid:
-            return _parse_a_records(resp)
-        return []
-    except Exception:
-        return []
-    finally:
-        if sock is not None:
-            try:
-                sock.close()
-            except Exception:
-                pass
-
-
-_real_getaddrinfo = socket.getaddrinfo
-
-
-def _fast_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
-    """优先用隧道 DNS 解析；失败直接报错（系统解析慢达 10-20s，会拖住进程）。"""
-    if isinstance(host, str) and host:
-        parts = host.split(".")
-        is_ip = len(parts) == 4 and all(p.isdigit() for p in parts)
-        if not is_ip:
-            ips = fast_resolve(host)
-            if ips:
-                return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (ip, int(port)))
-                        for ip in ips]
-            raise socket.gaierror("fast DNS failed: %s" % host)
-    return _real_getaddrinfo(host, port, family, type, proto, flags)
-
-
-class fast_dns:
-    """上下文管理器：HTTP 请求期间把 socket.getaddrinfo 换成快速解析。"""
-
-    def __enter__(self):
-        socket.getaddrinfo = _fast_getaddrinfo
-
-    def __exit__(self, *exc):
-        socket.getaddrinfo = _real_getaddrinfo
 
 
 # ---------------- 配置 ----------------
@@ -437,7 +336,7 @@ def on_turn(cfg):
     spawn_finalizer(thread_id, turn_id, debounce)
 
 
-# ---------------- HTTP（带快速 DNS 与看门狗） ----------------
+# ---------------- HTTP（系统 DNS + 看门狗） ----------------
 
 def _ssl_context():
     """certifi CA 包优先；Windows 系统证书库含已过期的旧根证书，
@@ -458,16 +357,15 @@ def _http_request(url, timeout, data=None, headers=None):
 
     def worker():
         try:
-            with fast_dns():
-                req = urllib.request.Request(url, data=data, headers=headers or {})
-                kwargs = {"timeout": timeout}
-                if url.lower().startswith("https://"):
-                    ctx = _ssl_context()
-                    if ctx is not None:
-                        kwargs["context"] = ctx
-                with urllib.request.urlopen(req, **kwargs) as resp:
-                    result["status"] = resp.status
-                    result["body"] = resp.read(8192).decode("utf-8", "replace")
+            req = urllib.request.Request(url, data=data, headers=headers or {})
+            kwargs = {"timeout": timeout}
+            if url.lower().startswith("https://"):
+                ctx = _ssl_context()
+                if ctx is not None:
+                    kwargs["context"] = ctx
+            with urllib.request.urlopen(req, **kwargs) as resp:
+                result["status"] = resp.status
+                result["body"] = resp.read(8192).decode("utf-8", "replace")
         except Exception as e:
             result["error"] = repr(e)
 
