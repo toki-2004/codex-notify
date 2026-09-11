@@ -54,8 +54,9 @@
 notify = ["你的python解释器路径", "本项目绝对路径/notify.py"]
 ```
 
-也可以直接下载 Releases 页面里的 `codex-notify-setup.zip`（含配置程序与配套脚本），
-解压到任意目录后双击 `codex-notify-setup.exe`，效果与 setup.bat 相同
+也可以直接下载 Releases 页面里的 `codex-notify-setup-vX.Y.Z.zip`（含配置程序与
+配套脚本，最新为 v1.1.0），解压到任意目录后双击 `codex-notify-setup.exe`，
+效果与 setup.bat 相同
 （系统仍需装有 Python 3，配置程序会自动探测）。
 
 ## 获取 appToken 与 UID（WxPusher 注册方法，免费）
